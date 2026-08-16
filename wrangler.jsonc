@@ -1,0 +1,24 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "material-center",
+	"main": "./server/index.ts",
+	"compatibility_date": "2026-08-16",
+	"compatibility_flags": ["global_fetch_strictly_public"],
+	"assets": {
+		"not_found_handling": "single-page-application",
+		"run_worker_first": ["/api/*"]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "material-center-db",
+			"migrations_dir": "./migrations"
+			// 部署到远程前，先执行 `wrangler d1 create material-center-db` 拿到 database_id，
+			// 然后取消下面一行注释并填入真实 ID（wrangler 4.x 也支持仅凭 database_name 自动创建）。
+			// "database_id": "your-d1-database-id"
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
+}
