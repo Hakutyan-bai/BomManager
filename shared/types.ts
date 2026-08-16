@@ -79,3 +79,48 @@ export interface ApiErrorBody {
     message: string;
   };
 }
+
+// ---------- BOM 查询 ----------
+
+/** BOM 中的一行（由前端从 Excel 解析后提交）。 */
+export interface BomItem {
+  /** 型号 / Name，自由文本，如 "47Ω 电阻"、"100nF"、"TPS54360DDAR"。 */
+  model: string;
+  /** 位号 / Designator，如 "R1,R3"；可能为空。 */
+  designator?: string;
+  /** 封装 / Footprint，如 "R0603"、"SOIC-8_L5.0-W4.0"；可能为空。 */
+  package?: string;
+  /** 数量 / Quantity，非负整数。 */
+  quantity: number;
+  /** 备注 / Remark；可能为空。 */
+  remark?: string;
+}
+
+/** BOM 行匹配到的物料摘要。 */
+export interface BomMatchMaterial {
+  id: number;
+  code: string;
+  name: string;
+  categoryName: string;
+  /** 剩余数量（件）。 */
+  stock: number;
+  /** 参数 + 封装的紧凑展示，如「100nF · 25V · 10% · 0603」；无参数时为空串。 */
+  params: string;
+}
+
+/** 匹配成功的一行 BOM：物料 + 库存 + 缺口。 */
+export interface BomMatched {
+  bom: BomItem;
+  material: BomMatchMaterial;
+  /** 缺口 = max(0, 需求数量 - 剩余数量)。 */
+  shortfall: number;
+}
+
+export interface BomMatchResponse {
+  /** 匹配到且库存 > 0（不用买）。 */
+  have: BomMatched[];
+  /** 匹配到但库存 = 0（缺货）。 */
+  outOfStock: BomMatched[];
+  /** 未匹配到（未收录，需购买/新建物料）。 */
+  notFound: BomItem[];
+}

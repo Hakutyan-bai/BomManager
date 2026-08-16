@@ -1,5 +1,7 @@
 import type {
   ApiErrorBody,
+  BomItem,
+  BomMatchResponse,
   Category,
   CategoryAttribute,
   Material,
@@ -80,4 +82,12 @@ export function updateMaterial(id: number, payload: MaterialPayload): Promise<Ma
 
 export function deleteMaterial(id: number): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/materials/${id}`, { method: "DELETE" });
+}
+
+export function matchBom(items: BomItem[]): Promise<BomMatchResponse> {
+  return request<BomMatchResponse>("/api/bom/match", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
 }

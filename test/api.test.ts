@@ -7,6 +7,7 @@ import quantitySql from "../migrations/0004_material_quantity.sql?raw";
 import ledSql from "../migrations/0005_seed_led.sql?raw";
 import type {
   ApiErrorBody,
+  BomMatchResponse,
   Category,
   CategoryAttribute,
   Material,
@@ -577,5 +578,320 @@ describe("搜索与筛选", () => {
     );
     expect(body.total).toBe(1);
     expect(body.items[0].name).toBe("含百分号%的物料");
+  });
+});
+
+describe("BOM 匹配", () => {
+  function match(items: unknown) {
+    return api<BomMatchResponse>("/api/bom/match", json("POST", { items }));
+  }
+
+  it("匹配电阻：值+单位 + 封装，三分法正确", async () => {
+    const r47 = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试47欧",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "47", [String(resIds.get("封装")!)]: "0603" },
+        quantity: 100,
+      }),
+    );
+    const r10k = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试10k",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "10", [String(resIds.get("封装")!)]: "0603" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 0,
+      }),
+    );
+    expect(r47.status).toBe(201);
+    expect(r10k.status).toBe(201);
+
+    const { status, body } = await match([
+      { model: "47Ω 电阻", designator: "R1", package: "R0603", quantity: 2 },
+      { model: "10K 电阻", designator: "R2", package: "R0603", quantity: 5 },
+    ]);
+    expect(status).toBe(200);
+    expect(body.notFound).toHaveLength(0);
+
+    const have = body.have.find((m) => m.bom.model === "47Ω 电阻");
+    expect(have).toBeDefined();
+    expect(have!.material.name).toBe("BOM测试47欧");
+    expect(have!.material.stock).toBe(100);
+    expect(have!.shortfall).toBe(0);
+
+    const oos = body.outOfStock.find((m) => m.bom.model === "10K 电阻");
+    expect(oos).toBeDefined();
+    expect(oos!.material.name).toBe("BOM测试10k");
+    expect(oos!.shortfall).toBe(5);
+  });
+
+  it("匹配电容：EE 值单位 + 额定电压/容差 + 封装", async () => {
+    const cap = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试100nF",
+        categoryId: 2,
+        attributes: {
+          [String(capIds.get("容量")!)]: "100",
+          [String(capIds.get("额定电压")!)]: "25",
+          [String(capIds.get("容差")!)]: "10",
+          [String(capIds.get("封装")!)]: "0603",
+        },
+        quantity: 50,
+      }),
+    );
+    expect(cap.status).toBe(201);
+
+    const { status, body } = await match([
+      { model: "100nF 25V 10% 电容", designator: "C1", package: "CAP 0603", quantity: 3 },
+    ]);
+    expect(status).toBe(200);
+    expect(body.have).toHaveLength(1);
+    expect(body.have[0].material.name).toBe("BOM测试100nF");
+    expect(body.have[0].material.params).toBe("100nF · 25V · 10% · 0603");
+    expect(body.have[0].shortfall).toBe(0);
+  });
+
+  it("额定电压可高不可低：不足拒绝，高耐压可替代", async () => {
+    // 6.3V 的 47uF，与 100V 的 10uF。额定电压是下限：BOM 要 50V 时 6.3V 必须拒绝，
+    // 但 BOM 只要 6.3V 时 100V 的物料可满足（高额定值可替代低要求）。
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试47uF-6.3V",
+        categoryId: 2,
+        attributes: {
+          [String(capIds.get("容量")!)]: "47",
+          [String(capIds.get("额定电压")!)]: "6.3",
+          [String(capIds.get("封装")!)]: "0603",
+        },
+        attributeUnits: { [String(capIds.get("容量")!)]: "uF" },
+        quantity: 5,
+      }),
+    );
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试10uF-100V",
+        categoryId: 2,
+        attributes: {
+          [String(capIds.get("容量")!)]: "10",
+          [String(capIds.get("额定电压")!)]: "100",
+        },
+        attributeUnits: { [String(capIds.get("容量")!)]: "uF" },
+        quantity: 3,
+      }),
+    );
+
+    // BOM 要 47uF 50V：6.3V 不足，必须未收录（不会被误配）。
+    const need50 = await match([{ model: "47uF 50V", designator: "C1", package: "C0603", quantity: 1 }]);
+    expect(need50.body.have).toHaveLength(0);
+    expect(need50.body.outOfStock).toHaveLength(0);
+    expect(need50.body.notFound.map((n) => n.model)).toEqual(["47uF 50V"]);
+
+    // BOM 要 10uF 6.3V：100V 的物料可满足（高耐压可替代低要求）。
+    const need63 = await match([{ model: "10uF 6.3V", designator: "C2", quantity: 1 }]);
+    expect(need63.body.have).toHaveLength(1);
+    expect(need63.body.have[0].material.name).toBe("BOM测试10uF-100V");
+  });
+
+  it("名称精确匹配：零件号（二极管）", async () => {
+    const dioIds = await fetchAttrIds(4);
+    const d = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "B5819W",
+        categoryId: 4,
+        attributes: { [String(dioIds.get("反向耐压")!)]: "40", [String(dioIds.get("封装")!)]: "SOD-123" },
+        quantity: 5,
+      }),
+    );
+    expect(d.status).toBe(201);
+
+    const { status, body } = await match([
+      { model: "B5819W", designator: "D1", package: "SOD-123", quantity: 10 },
+    ]);
+    expect(status).toBe(200);
+    expect(body.have).toHaveLength(1);
+    expect(body.have[0].material.name).toBe("B5819W");
+    expect(body.have[0].shortfall).toBe(5);
+  });
+
+  it("单位归一化：uF 与 Ω 后缀", async () => {
+    const cap22 = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试22uF",
+        categoryId: 2,
+        attributes: { [String(capIds.get("容量")!)]: "22", [String(capIds.get("封装")!)]: "0805" },
+        attributeUnits: { [String(capIds.get("容量")!)]: "uF" },
+        quantity: 0,
+      }),
+    );
+    expect(cap22.status).toBe(201);
+
+    const { status, body } = await match([{ model: "22uF", designator: "C2", package: "C0805", quantity: 1 }]);
+    expect(status).toBe(200);
+    expect(body.outOfStock).toHaveLength(1);
+    expect(body.outOfStock[0].material.name).toBe("BOM测试22uF");
+  });
+
+  it("EE 电阻记法：20R / 1M", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试20欧",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "20" },
+        quantity: 0,
+      }),
+    );
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试1兆",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "1" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "MΩ" },
+        quantity: 3,
+      }),
+    );
+
+    const { body } = await match([
+      { model: "20R", designator: "R1", quantity: 1 },
+      { model: "1M", designator: "R2", quantity: 1 },
+    ]);
+    expect(body.outOfStock.map((m) => m.material.name)).toContain("BOM测试20欧");
+    expect(body.have.map((m) => m.material.name)).toContain("BOM测试1兆");
+  });
+
+  it("中文欧姆识别：4.7k欧 匹配阻值参数", async () => {
+    // BOM 型号用中文「欧」表示欧姆，应匹配到库存的阻值参数（4.7kΩ）。
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试4.7k欧",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "4.7", [String(resIds.get("封装")!)]: "0603" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 8,
+      }),
+    );
+
+    const { body } = await match([{ model: "4.7k欧", designator: "R1", package: "0603", quantity: 1 }]);
+    expect(body.notFound).toHaveLength(0);
+    expect(body.have).toHaveLength(1);
+    expect(body.have[0].material.name).toBe("BOM测试4.7k欧");
+  });
+
+  it("单位换算：0.22uF 与 220nF 等价", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试220nF换算",
+        categoryId: 2,
+        attributes: { [String(capIds.get("容量")!)]: "220" },
+        attributeUnits: { [String(capIds.get("容量")!)]: "nF" },
+        quantity: 7,
+      }),
+    );
+
+    const { body } = await match([{ model: "0.22uF", designator: "C1", quantity: 1 }]);
+    expect(body.have).toHaveLength(1);
+    expect(body.have[0].material.name).toBe("BOM测试220nF换算");
+  });
+
+  it("欧洲记法：3K3 = 3.3kΩ", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试3k3",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "3.3" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 2,
+      }),
+    );
+
+    const { body } = await match([{ model: "3K3", designator: "R1", quantity: 1 }]);
+    expect(body.have).toHaveLength(1);
+    expect(body.have[0].material.name).toBe("BOM测试3k3");
+  });
+
+  it("小写单位：470nf = 470nF", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试小写nf",
+        categoryId: 2,
+        attributes: { [String(capIds.get("容量")!)]: "470" },
+        attributeUnits: { [String(capIds.get("容量")!)]: "nF" },
+        quantity: 4,
+      }),
+    );
+
+    const { body } = await match([{ model: "470nf", designator: "C1", quantity: 1 }]);
+    expect(body.have).toHaveLength(1);
+    expect(body.have[0].material.name).toBe("BOM测试小写nf");
+  });
+
+  it("封装精准区分：同值不同封装选对物料", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试33k-0603",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "33", [String(resIds.get("封装")!)]: "0603" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 0,
+      }),
+    );
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试33k-0805",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "33", [String(resIds.get("封装")!)]: "0805" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 10,
+      }),
+    );
+
+    const { body } = await match([{ model: "33K", designator: "R1", package: "0805", quantity: 1 }]);
+    expect(body.notFound).toHaveLength(0);
+    expect(body.have).toHaveLength(1);
+    expect(body.have[0].material.name).toBe("BOM测试33k-0805");
+  });
+
+  it("不会把值/位号不匹配的型号误配到其它分类", async () => {
+    // 库里有 0603 电容（本测试文件前面创建），但没有 68Ω 电阻 / LED / AO3416。
+    // 这些行只凭封装（0603 / 0805 / SOT-23）不应误配到电容或三极管。
+    const { body } = await match([
+      { model: "68Ω 电阻", designator: "R1", package: "R0603", quantity: 4 },
+      { model: "LED_0805 发光二极管", designator: "LED1", package: "LED_0805", quantity: 5 },
+      { model: "AO3416", designator: "Q1", package: "SOT-23", quantity: 4 },
+    ]);
+    expect(body.have).toHaveLength(0);
+    expect(body.outOfStock).toHaveLength(0);
+    expect(body.notFound.map((n) => n.model)).toEqual(["68Ω 电阻", "LED_0805 发光二极管", "AO3416"]);
+  });
+
+  it("未收录：无法匹配的型号", async () => {
+    const { status, body } = await match([{ model: "完全不存在的物料XYZ123", designator: "U9", quantity: 1 }]);
+    expect(status).toBe(200);
+    expect(body.have).toHaveLength(0);
+    expect(body.outOfStock).toHaveLength(0);
+    expect(body.notFound).toHaveLength(1);
+    expect(body.notFound[0].model).toBe("完全不存在的物料XYZ123");
+  });
+
+  it("参数校验：items 非数组 / 型号为空 / 数量为负", async () => {
+    expect((await match("x")).status).toBe(400);
+    expect((await match([{ model: "", quantity: 1 }])).status).toBe(400);
+    expect((await match([{ model: "x", quantity: -1 }])).status).toBe(400);
+    expect((await api<ApiErrorBody>("/api/bom/match", json("POST", {}))).status).toBe(400);
   });
 });

@@ -4,6 +4,7 @@ import type { Env } from "./types";
 import { AppError, errorBody, type HttpStatus } from "./errors";
 import { categoriesRoutes } from "./routes/categories";
 import { materialsRoutes } from "./routes/materials";
+import { bomRoutes } from "./routes/bom";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -11,6 +12,7 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 
 app.route("/api/categories", categoriesRoutes);
 app.route("/api/materials", materialsRoutes);
+app.route("/api/bom", bomRoutes);
 
 app.notFound((c) => c.json(errorBody("NOT_FOUND", "接口不存在"), 404));
 

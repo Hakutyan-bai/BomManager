@@ -11,6 +11,7 @@ import { Pagination } from "./components/Pagination";
 import { MaterialFormModal, type EditableMaterial } from "./components/MaterialFormModal";
 import { MaterialDetailModal } from "./components/MaterialDetailModal";
 import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
+import { BomQueryModal } from "./components/BomQueryModal";
 import { Button } from "./components/ui";
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<MaterialListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [bomOpen, setBomOpen] = useState(false);
 
   function openCreate() {
     setEditingMaterial(null);
@@ -95,9 +97,12 @@ export default function App() {
       <header className="border-b border-gray-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
           <h1 className="text-lg font-semibold text-gray-900">物料中心</h1>
-          <Button variant="primary" onClick={openCreate}>
-            <span aria-hidden>+</span> 添加物料
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setBomOpen(true)}>BOM 查询</Button>
+            <Button variant="primary" onClick={openCreate}>
+              <span aria-hidden>+</span> 添加物料
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -162,6 +167,7 @@ export default function App() {
         }}
         onConfirm={handleDeleteConfirm}
       />
+      <BomQueryModal open={bomOpen} onClose={() => setBomOpen(false)} />
     </div>
   );
 }

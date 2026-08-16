@@ -70,6 +70,20 @@ export async function listMaterials(db: D1Database, query: MaterialListQuery): P
   return { rows: listResult.results, total: countRow?.total ?? 0 };
 }
 
+/** 一次性取出全部未删除物料（含分类名），供 BOM 匹配在 JS 内全量比对。 */
+export async function listAllActiveMaterials(db: D1Database): Promise<MaterialRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT m.id, m.code, m.name, m.quantity, m.category_id, c.name AS category_name, m.created_at, m.updated_at
+       FROM materials m
+       JOIN categories c ON c.id = m.category_id
+       WHERE m.deleted_at IS NULL
+       ORDER BY m.id ASC`,
+    )
+    .all<MaterialRow>();
+  return results;
+}
+
 /** 返回含删除标记的物料行（用于判断「不存在」与「已删除」）。 */
 export async function getMaterialByIdRaw(db: D1Database, id: number): Promise<MaterialRowWithDeleted | null> {
   const row = await db
