@@ -866,6 +866,40 @@ describe("BOM 匹配", () => {
     expect(body.have[0].material.name).toBe("BOM测试33k-0805");
   });
 
+  it("封装硬约束：BOM 指定 1206 不会误配到 0603/0805", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试5.1k-0603",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "5.1", [String(resIds.get("封装")!)]: "0603" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 9,
+      }),
+    );
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试5.1k-0805",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "5.1", [String(resIds.get("封装")!)]: "0805" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 6,
+      }),
+    );
+
+    // BOM 要 1206：库里只有 0603/0805，封装不符必须未收录。
+    const need1206 = await match([{ model: "5.1kΩ 电阻", designator: "R1", package: "R1206", quantity: 1 }]);
+    expect(need1206.body.have).toHaveLength(0);
+    expect(need1206.body.outOfStock).toHaveLength(0);
+    expect(need1206.body.notFound.map((n) => n.model)).toEqual(["5.1kΩ 电阻"]);
+
+    // BOM 要 0805：应精确命中 0805 的物料（0603 被拒绝）。
+    const need0805 = await match([{ model: "5.1kΩ 电阻", designator: "R2", package: "R0805", quantity: 1 }]);
+    expect(need0805.body.have).toHaveLength(1);
+    expect(need0805.body.have[0].material.name).toBe("BOM测试5.1k-0805");
+  });
+
   it("不会把值/位号不匹配的型号误配到其它分类", async () => {
     // 库里有 0603 电容（本测试文件前面创建），但没有 68Ω 电阻 / LED / AO3416。
     // 这些行只凭封装（0603 / 0805 / SOT-23）不应误配到电容或三极管。

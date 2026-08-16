@@ -12,7 +12,6 @@ function BomRowCells({ item }: { item: BomItem }) {
   return (
     <>
       <td className="px-3 py-2 text-sm text-gray-900">{item.model}</td>
-      <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-500">{item.designator ?? "—"}</td>
       <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-500">{item.package ?? "—"}</td>
       <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-sm text-gray-700">{item.quantity}</td>
     </>
@@ -44,7 +43,6 @@ function MatchedSection({
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">型号</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">位号</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">封装</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">数量</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">匹配物料</th>
@@ -84,7 +82,6 @@ function NotFoundSection({ rows }: { rows: BomItem[] }) {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">型号</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">位号</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">封装</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">数量</th>
               </tr>

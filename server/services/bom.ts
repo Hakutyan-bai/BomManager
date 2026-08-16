@@ -266,10 +266,12 @@ function normalizePackage(s: string): string {
  * 打分规则：
  *  1) 精确名称 → 100。
  *  2) 主规格值命中（同族等值）→ 55；若 BOM 主规格与物料同族但值不同 → 直接判 0（拒绝）。
- *  3) 封装命中 → 基础 20；主规格也命中时再加 15（强匹配）。
- *  4) 次要规格（V/A/W/%）重叠加成。
- *  5) 分类推断一致 → +10。
- *  6) 无任何主规格命中时，名称子串兜底（用于零件号/IC）。
+ *  3) 封装：BOM 与物料都填写了封装且不一致 → 直接拒绝（避免 1206 误配到 0603/0805）；
+ *     一致时主规格命中再加 15。
+ *  4) 耐压约束：BOM 要求电压不得高于物料额定电压（可高不可低）。
+ *  5) 次要规格（V/A/W/%）重叠加成。
+ *  6) 分类推断一致 → +10。
+ *  7) 无任何主规格命中时，名称子串兜底（用于零件号/IC）。
  */
 export function matchScore(item: BomItem, m: MaterialForMatch, categories: Set<string>): number {
   const nameNorm = normalize(item.model);
@@ -292,6 +294,10 @@ export function matchScore(item: BomItem, m: MaterialForMatch, categories: Set<s
     const required = Math.max(...bomVoltage);
     if (m.voltageRating < required && !approxEqual(m.voltageRating, required)) return 0;
   }
+
+  // 1.6) 封装约束：BOM 与物料都填写了封装且不一致时，直接拒绝（1206 不能配到 0603/0805）。
+  //       仅一方缺封装时不做判断，交给后续打分。
+  if (bomPkg !== "" && m.packageNorm !== "" && !pkgMatch) return 0;
 
   // 2) 主规格（阻值/容量/电感量）：BOM 含主规格时，必须同族等值命中；
   //    封装只是加成，绝不单独构成匹配（避免「47Ω 电阻」误配到同封装的电容）。
