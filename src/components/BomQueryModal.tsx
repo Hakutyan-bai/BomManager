@@ -25,11 +25,11 @@ function MatchedSection({
   emptyHint,
 }: {
   title: string;
-  tone: "green" | "amber";
+  tone: "green" | "blue" | "amber";
   rows: BomMatched[];
   emptyHint: string;
 }) {
-  const toneCls = tone === "green" ? "text-green-700" : "text-amber-600";
+  const toneCls = tone === "green" ? "text-green-700" : tone === "blue" ? "text-blue-700" : "text-amber-600";
   return (
     <div className="mt-4">
       <h4 className={`text-sm font-semibold ${toneCls}`}>
@@ -172,9 +172,10 @@ export function BomQueryModal({ open, onClose }: { open: boolean; onClose: () =>
       {!loading && !error && result && (
         <div>
           <p className="mt-4 text-xs text-gray-400">
-            共解析 {parsedCount} 行 · 有库存 {result.have.length} · 缺货 {result.outOfStock.length} · 未收录 {result.notFound.length}
+            共解析 {parsedCount} 行 · 有库存 {result.have.length} · 可替代 {result.substitute.length} · 缺货 {result.outOfStock.length} · 未收录 {result.notFound.length}
           </p>
           <MatchedSection title="有（不用买）" tone="green" rows={result.have} emptyHint="没有「有库存」的匹配项" />
+          <MatchedSection title="可替代（封装差一档）" tone="blue" rows={result.substitute} emptyHint="没有可替代的匹配项" />
           <MatchedSection title="缺货（库存 0）" tone="amber" rows={result.outOfStock} emptyHint="没有「缺货」的匹配项" />
           <NotFoundSection rows={result.notFound} />
         </div>

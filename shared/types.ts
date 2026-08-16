@@ -119,6 +119,8 @@ export interface BomMatched {
 export interface BomMatchResponse {
   /** 匹配到且库存 > 0（不用买）。 */
   have: BomMatched[];
+  /** 无精确匹配时，封装差一档可替代的物料（如 0805 缺货用 0603 替代）。 */
+  substitute: BomMatched[];
   /** 匹配到但库存 = 0（缺货）。 */
   outOfStock: BomMatched[];
   /** 未匹配到（未收录，需购买/新建物料）。 */

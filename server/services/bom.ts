@@ -260,6 +260,46 @@ function normalizePackage(s: string): string {
   return s.toLowerCase().replace(/[\s_/\\]/g, "");
 }
 
+// ---------- 封装替代 ----------
+
+/** 贴片尺寸阶梯（小→大）。相邻档位可向下替代：无 0805 可用 0603，但不能用 0402。 */
+const SMD_SIZE_LADDER = ["0201", "0402", "0603", "0805", "1206", "1210", "2010", "2512"];
+
+/** 从封装字符串提取标准贴片尺寸（4 位数字且落在阶梯内），否则返回 null。 */
+function extractFootprintSize(pkg: string): string | null {
+  const m = /\d{4}/.exec(pkg);
+  if (!m) return null;
+  const size = m[0];
+  return SMD_SIZE_LADDER.includes(size) ? size : null;
+}
+
+/**
+ * 封装关系判定：
+ *  - unknown：任一方缺封装，不做判断；
+ *  - exact：归一化后子串命中（如 R0603 ↔ 0603）；
+ *  - substitute：物料封装比需求小一档（可替代）；
+ *  - mismatch：其余（更大、小两档以上、非贴片尺寸）。
+ */
+function packageRelation(bomPkg: string, matPkg: string): "unknown" | "exact" | "substitute" | "mismatch" {
+  if (bomPkg === "" || matPkg === "") return "unknown";
+  if (bomPkg.includes(matPkg) || matPkg.includes(bomPkg)) return "exact";
+  const b = extractFootprintSize(bomPkg);
+  const m = extractFootprintSize(matPkg);
+  if (b && m) {
+    const diff = SMD_SIZE_LADDER.indexOf(b) - SMD_SIZE_LADDER.indexOf(m);
+    if (diff === 1) return "substitute";
+  }
+  return "mismatch";
+}
+
+/** 耐压约束：BOM 有电压要求时，物料额定电压不得低于要求（可高不可低）。 */
+function voltageOk(bomSecondary: SpecValue[], m: MaterialForMatch): boolean {
+  const bomVoltage = bomSecondary.filter((s) => s.family === "v").map((s) => s.value);
+  if (bomVoltage.length === 0 || m.voltageRating == null) return true;
+  const required = Math.max(...bomVoltage);
+  return m.voltageRating >= required || approxEqual(m.voltageRating, required);
+}
+
 /**
  * 计算单个物料对单个 BOM 行的匹配得分；0 表示不匹配。
  *
@@ -283,21 +323,14 @@ export function matchScore(item: BomItem, m: MaterialForMatch, categories: Set<s
   const bomSpecs = extractSpecValues(item.model);
   const bomPrimary = bomSpecs.filter((s) => s.primary);
   const bomSecondary = bomSpecs.filter((s) => !s.primary);
-  const bomPkg = normalizePackage(item.package ?? "");
-  const pkgMatch =
-    bomPkg !== "" && m.packageNorm !== "" && (bomPkg.includes(m.packageNorm) || m.packageNorm.includes(bomPkg));
+  const rel = packageRelation(normalizePackage(item.package ?? ""), m.packageNorm);
+  const pkgMatch = rel === "exact";
 
-  // 1.5) 耐压约束：额定电压是「下限」，可高不可低。BOM 要求 50V 时，6.3V 的物料必须拒绝；
-  //       BOM 只要求 6.3V 时，50V 的物料可满足（高额定值可替代低要求）。
-  const bomVoltage = bomSecondary.filter((s) => s.family === "v").map((s) => s.value);
-  if (bomVoltage.length > 0 && m.voltageRating != null) {
-    const required = Math.max(...bomVoltage);
-    if (m.voltageRating < required && !approxEqual(m.voltageRating, required)) return 0;
-  }
+  // 1.5) 耐压约束。
+  if (!voltageOk(bomSecondary, m)) return 0;
 
-  // 1.6) 封装约束：BOM 与物料都填写了封装且不一致时，直接拒绝（1206 不能配到 0603/0805）。
-  //       仅一方缺封装时不做判断，交给后续打分。
-  if (bomPkg !== "" && m.packageNorm !== "" && !pkgMatch) return 0;
+  // 1.6) 封装约束：精确匹配只接受「封装一致」或「一方缺封装」；替代/不符都拒绝。
+  if (rel === "mismatch" || rel === "substitute") return 0;
 
   // 2) 主规格（阻值/容量/电感量）：BOM 含主规格时，必须同族等值命中；
   //    封装只是加成，绝不单独构成匹配（避免「47Ω 电阻」误配到同封装的电容）。
@@ -332,6 +365,30 @@ export function matchScore(item: BomItem, m: MaterialForMatch, categories: Set<s
   }
 
   return 0;
+}
+
+/** 封装替代得分：仅当「主规格命中 + 物料封装比需求小一档 + 电压满足」时返回 > 0。 */
+function substituteScore(item: BomItem, m: MaterialForMatch, categories: Set<string>): number {
+  const bomSpecs = extractSpecValues(item.model);
+  const bomPrimary = bomSpecs.filter((s) => s.primary);
+  const bomSecondary = bomSpecs.filter((s) => !s.primary);
+  if (bomPrimary.length === 0) return 0; // 零件号/无主规格不做封装替代
+
+  if (packageRelation(normalizePackage(item.package ?? ""), m.packageNorm) !== "substitute") return 0;
+  if (!voltageOk(bomSecondary, m)) return 0;
+
+  const hit = bomPrimary.some((bp) =>
+    m.primaryValues.some((v) => v.family === bp.family && approxEqual(v.value, bp.value)),
+  );
+  if (!hit) return 0;
+
+  let score = 45; // 替代物基础分低于精确匹配（55），且无封装加分
+  const overlap = bomSecondary.filter((b) =>
+    m.secondaryValues.some((v) => v.family === b.family && approxEqual(v.value, b.value)),
+  ).length;
+  score += Math.min(overlap, 2) * 5;
+  if (categories.size > 0 && categories.has(m.categoryName)) score += 10;
+  return score;
 }
 
 /** 从物料行 + 参数值构建匹配用的内部表示。 */
@@ -392,47 +449,57 @@ function toMaterialForMatch(
   };
 }
 
-/** 对一批 BOM 行执行匹配，返回三分结果。 */
+/** 把命中的物料组装成响应摘要（替代物与精确匹配共用同一结构）。 */
+function buildMatched(item: BomItem, m: MaterialForMatch): BomMatched {
+  return {
+    bom: item,
+    material: {
+      id: m.id,
+      code: m.code,
+      name: m.name,
+      categoryName: m.categoryName,
+      stock: m.quantity,
+      params: m.params,
+    },
+    shortfall: Math.max(0, item.quantity - m.quantity),
+  };
+}
+
+/** 对一批 BOM 行执行匹配，返回四分结果（有 / 可替代 / 缺货 / 未收录）。 */
 export function matchBomItems(
   materials: MaterialForMatch[],
   items: BomItem[],
 ): BomMatchResponse {
   const have: BomMatched[] = [];
+  const substitute: BomMatched[] = [];
   const outOfStock: BomMatched[] = [];
   const notFound: BomItem[] = [];
 
   for (const item of items) {
     const categories = inferCategories(item);
-    let best: { material: MaterialForMatch; score: number } | null = null;
+    let bestExact: { material: MaterialForMatch; score: number } | null = null;
+    let bestSub: { material: MaterialForMatch; score: number } | null = null;
     for (const m of materials) {
       const score = matchScore(item, m, categories);
-      if (score <= 0) continue;
-      if (!best || score > best.score || (score === best.score && m.quantity > best.material.quantity)) {
-        best = { material: m, score };
+      if (score > 0 && (!bestExact || score > bestExact.score || (score === bestExact.score && m.quantity > bestExact.material.quantity))) {
+        bestExact = { material: m, score };
+      }
+      const sub = substituteScore(item, m, categories);
+      if (sub > 0 && (!bestSub || sub > bestSub.score || (sub === bestSub.score && m.quantity > bestSub.material.quantity))) {
+        bestSub = { material: m, score: sub };
       }
     }
 
-    if (!best) {
+    if (bestExact) {
+      (bestExact.material.quantity > 0 ? have : outOfStock).push(buildMatched(item, bestExact.material));
+    } else if (bestSub) {
+      substitute.push(buildMatched(item, bestSub.material));
+    } else {
       notFound.push(item);
-      continue;
     }
-
-    const matched: BomMatched = {
-      bom: item,
-      material: {
-        id: best.material.id,
-        code: best.material.code,
-        name: best.material.name,
-        categoryName: best.material.categoryName,
-        stock: best.material.quantity,
-        params: best.material.params,
-      },
-      shortfall: Math.max(0, item.quantity - best.material.quantity),
-    };
-    (best.material.quantity > 0 ? have : outOfStock).push(matched);
   }
 
-  return { have, outOfStock, notFound };
+  return { have, substitute, outOfStock, notFound };
 }
 
 /** 入口：读取全部未删除物料及其参数，匹配并返回三分结果。 */

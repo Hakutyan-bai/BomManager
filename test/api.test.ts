@@ -866,7 +866,7 @@ describe("BOM 匹配", () => {
     expect(body.have[0].material.name).toBe("BOM测试33k-0805");
   });
 
-  it("封装硬约束：BOM 指定 1206 不会误配到 0603/0805", async () => {
+  it("封装硬约束：1206 不精确配到 0603/0805，0805 作为替代", async () => {
     await api<Material>(
       "/api/materials",
       json("POST", {
@@ -888,16 +888,48 @@ describe("BOM 匹配", () => {
       }),
     );
 
-    // BOM 要 1206：库里只有 0603/0805，封装不符必须未收录。
+    // BOM 要 1206：库里只有 0603/0805，都不精确命中；0805 差一档作为替代，0603 差两档不替代。
     const need1206 = await match([{ model: "5.1kΩ 电阻", designator: "R1", package: "R1206", quantity: 1 }]);
     expect(need1206.body.have).toHaveLength(0);
     expect(need1206.body.outOfStock).toHaveLength(0);
-    expect(need1206.body.notFound.map((n) => n.model)).toEqual(["5.1kΩ 电阻"]);
+    expect(need1206.body.substitute.map((m) => m.material.name)).toEqual(["BOM测试5.1k-0805"]);
+    expect(need1206.body.notFound).toHaveLength(0);
 
     // BOM 要 0805：应精确命中 0805 的物料（0603 被拒绝）。
     const need0805 = await match([{ model: "5.1kΩ 电阻", designator: "R2", package: "R0805", quantity: 1 }]);
     expect(need0805.body.have).toHaveLength(1);
     expect(need0805.body.have[0].material.name).toBe("BOM测试5.1k-0805");
+  });
+
+  it("封装替代：无 0805 用 0603 替代，0402/1206 不替代", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试6.8k-0603",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "6.8", [String(resIds.get("封装")!)]: "0603" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 4,
+      }),
+    );
+
+    // BOM 要 0805：库里只有 0603（差一档）→ 进入「可替代」。
+    const need0805 = await match([{ model: "6.8kΩ 电阻", designator: "R1", package: "R0805", quantity: 2 }]);
+    expect(need0805.body.have).toHaveLength(0);
+    expect(need0805.body.substitute).toHaveLength(1);
+    expect(need0805.body.substitute[0].material.name).toBe("BOM测试6.8k-0603");
+    expect(need0805.body.notFound).toHaveLength(0);
+
+    // BOM 要 1206：0603 小两档，不替代 → 未收录。
+    const need1206 = await match([{ model: "6.8kΩ 电阻", designator: "R2", package: "R1206", quantity: 2 }]);
+    expect(need1206.body.substitute).toHaveLength(0);
+    expect(need1206.body.notFound.map((n) => n.model)).toEqual(["6.8kΩ 电阻"]);
+
+    // BOM 要 0603：精确命中，不属于替代。
+    const need0603 = await match([{ model: "6.8kΩ 电阻", designator: "R3", package: "R0603", quantity: 2 }]);
+    expect(need0603.body.have).toHaveLength(1);
+    expect(need0603.body.have[0].material.name).toBe("BOM测试6.8k-0603");
+    expect(need0603.body.substitute).toHaveLength(0);
   });
 
   it("不会把值/位号不匹配的型号误配到其它分类", async () => {
