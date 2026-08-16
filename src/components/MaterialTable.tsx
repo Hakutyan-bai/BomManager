@@ -42,6 +42,7 @@ export function MaterialTable({
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">编号</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">名称</th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">分类</th>
+            <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">剩余数量</th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">操作</th>
           </tr>
         </thead>
@@ -58,6 +59,7 @@ export function MaterialTable({
               <td className="whitespace-nowrap px-4 py-3">
                 <Badge>{m.category.name}</Badge>
               </td>
+              <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm text-gray-700">{m.quantity}</td>
               <td className="whitespace-nowrap px-4 py-3 text-right">
                 <div className="flex justify-end gap-2">
                   <Button

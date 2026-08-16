@@ -8,22 +8,40 @@ export interface EditableMaterial {
   id: number;
   name: string;
   category: MaterialCategory;
+  quantity: number;
   attributes: MaterialAttributeValue[];
 }
 
-function buildInitialValues(attrs: CategoryAttribute[], material: EditableMaterial | null, editMode: boolean): Record<string, string> {
-  const next: Record<string, string> = {};
+/** 由参数定义 + 待编辑物料构造初始值：普通参数的值，以及可选单位的所选单位。 */
+function buildInitialState(
+  attrs: CategoryAttribute[],
+  material: EditableMaterial | null,
+  editMode: boolean,
+): { values: Record<string, string>; units: Record<string, string> } {
+  const values: Record<string, string> = {};
+  const units: Record<string, string> = {};
   for (const a of attrs) {
     const existing = editMode && material ? material.attributes.find((v) => v.id === a.id) : undefined;
-    next[String(a.id)] = existing?.value ?? "";
+    values[String(a.id)] = existing?.value ?? "";
+    if (a.unitOptions.length > 0) {
+      const chosen =
+        existing?.unit && a.unitOptions.includes(existing.unit)
+          ? existing.unit
+          : a.unitOptions.includes(a.unit)
+            ? a.unit
+            : a.unitOptions[0];
+      units[String(a.id)] = chosen;
+    }
   }
-  return next;
+  return { values, units };
 }
 
 function renderAttributeInput(
   a: CategoryAttribute,
   value: string,
   onChange: (v: string) => void,
+  unit: string,
+  onUnitChange: (v: string) => void,
 ) {
   if (a.type === "select") {
     return (
@@ -44,6 +62,22 @@ function renderAttributeInput(
     ) : (
       <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="请输入" />
     );
+
+  // number 参数若配置了可选单位集合，渲染单位下拉框；否则沿用固定单位展示。
+  if (a.type === "number" && a.unitOptions.length > 0) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex-1">{input}</div>
+        <Select value={unit} onChange={(e) => onUnitChange(e.target.value)} className="w-24 shrink-0">
+          {a.unitOptions.map((u) => (
+            <option key={u} value={u}>
+              {u}
+            </option>
+          ))}
+        </Select>
+      </div>
+    );
+  }
 
   if (a.unit) {
     return (
@@ -73,8 +107,10 @@ export function MaterialFormModal({
 }) {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<number | "">("");
+  const [quantity, setQuantity] = useState("");
   const [attrDefs, setAttrDefs] = useState<CategoryAttribute[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [units, setUnits] = useState<Record<string, string>>({});
   const [loadingAttrs, setLoadingAttrs] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,10 +123,13 @@ export function MaterialFormModal({
     if (mode === "edit" && material) {
       setName(material.name);
       setCategoryId(material.category.id);
+      setQuantity(String(material.quantity));
     } else {
       setName("");
       setCategoryId("");
+      setQuantity("");
       setValues({});
+      setUnits({});
       setAttrDefs([]);
     }
   }, [open, mode, material]);
@@ -107,7 +146,9 @@ export function MaterialFormModal({
       .then((attrs) => {
         if (cancelled) return;
         setAttrDefs(attrs);
-        setValues(buildInitialValues(attrs, mode === "edit" ? material : null, mode === "edit"));
+        const init = buildInitialState(attrs, mode === "edit" ? material : null, mode === "edit");
+        setValues(init.values);
+        setUnits(init.units);
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -125,6 +166,10 @@ export function MaterialFormModal({
     setValues((prev) => ({ ...prev, [String(id)]: v }));
   }
 
+  function setUnit(id: number, v: string) {
+    setUnits((prev) => ({ ...prev, [String(id)]: v }));
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -137,7 +182,13 @@ export function MaterialFormModal({
       return;
     }
 
-    const payload: MaterialPayload = { name: name.trim(), categoryId, attributes: values };
+    const payload: MaterialPayload = {
+      name: name.trim(),
+      categoryId,
+      attributes: values,
+      attributeUnits: units,
+      quantity: quantity.trim() === "" ? 0 : Number(quantity),
+    };
     setSubmitting(true);
     try {
       if (mode === "edit" && material) {
@@ -191,6 +242,17 @@ export function MaterialFormModal({
           </Select>
         </Field>
 
+        <Field label="剩余数量" hint="件（当前库存数量，可为 0）">
+          <Input
+            type="number"
+            min="0"
+            step="1"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            placeholder="0"
+          />
+        </Field>
+
         {categoryId !== "" && (
           <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">参数</p>
@@ -205,7 +267,13 @@ export function MaterialFormModal({
             {!loadingAttrs &&
               attrDefs.map((a) => (
                 <Field key={a.id} label={a.name} required={a.required}>
-                  {renderAttributeInput(a, values[String(a.id)] ?? "", (v) => setValue(a.id, v))}
+                  {renderAttributeInput(
+                    a,
+                    values[String(a.id)] ?? "",
+                    (v) => setValue(a.id, v),
+                    units[String(a.id)] ?? "",
+                    (v) => setUnit(a.id, v),
+                  )}
                 </Field>
               ))}
           </div>

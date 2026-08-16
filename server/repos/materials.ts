@@ -3,6 +3,8 @@ import type { MaterialRow, MaterialRowWithDeleted, MaterialAttributeValueRow } f
 export interface AttributeValueInput {
   attributeId: number;
   value: string;
+  /** 所选单位；空字符串表示沿用分类默认单位。 */
+  unit: string;
 }
 
 export interface MaterialListQuery {
@@ -43,7 +45,7 @@ export async function listMaterials(db: D1Database, query: MaterialListQuery): P
            WHERE ma.material_id = m.id
              AND (ma.value LIKE ? ESCAPE '\\'
                   OR ca.name LIKE ? ESCAPE '\\'
-                  OR ma.value || ca.unit LIKE ? ESCAPE '\\')
+                  OR ma.value || COALESCE(NULLIF(ma.unit, ''), ca.unit) LIKE ? ESCAPE '\\')
          ))`,
     );
     params.push(like, like, like, like, like);
@@ -54,7 +56,7 @@ export async function listMaterials(db: D1Database, query: MaterialListQuery): P
 
   const countStmt = db.prepare(`SELECT COUNT(DISTINCT m.id) AS total ${base}`);
   const listStmt = db.prepare(
-    `SELECT DISTINCT m.id, m.code, m.name, m.category_id, c.name AS category_name, m.created_at, m.updated_at
+    `SELECT DISTINCT m.id, m.code, m.name, m.quantity, m.category_id, c.name AS category_name, m.created_at, m.updated_at
      ${base}
      ORDER BY m.id DESC
      LIMIT ? OFFSET ?`,
@@ -72,7 +74,7 @@ export async function listMaterials(db: D1Database, query: MaterialListQuery): P
 export async function getMaterialByIdRaw(db: D1Database, id: number): Promise<MaterialRowWithDeleted | null> {
   const row = await db
     .prepare(
-      `SELECT m.id, m.code, m.name, m.category_id, c.name AS category_name, m.created_at, m.updated_at, m.deleted_at
+      `SELECT m.id, m.code, m.name, m.quantity, m.category_id, c.name AS category_name, m.created_at, m.updated_at, m.deleted_at
        FROM materials m
        JOIN categories c ON c.id = m.category_id
        WHERE m.id = ?`,
@@ -88,7 +90,8 @@ export async function listMaterialAttributes(
 ): Promise<MaterialAttributeValueRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT ca.id AS attribute_id, ma.material_id, ma.value, ca.name, ca.type, ca.unit, ca.sort_order
+      `SELECT ca.id AS attribute_id, ma.material_id, ma.value, ca.name, ca.type,
+              COALESCE(NULLIF(ma.unit, ''), ca.unit) AS unit, ca.sort_order
        FROM material_attributes ma
        JOIN category_attributes ca ON ca.id = ma.attribute_id
        WHERE ma.material_id = ?
@@ -107,7 +110,8 @@ export async function listMaterialAttributesBulk(
   const placeholders = materialIds.map(() => "?").join(", ");
   const { results } = await db
     .prepare(
-      `SELECT ca.id AS attribute_id, ma.material_id, ma.value, ca.name, ca.type, ca.unit, ca.sort_order
+      `SELECT ca.id AS attribute_id, ma.material_id, ma.value, ca.name, ca.type,
+              COALESCE(NULLIF(ma.unit, ''), ca.unit) AS unit, ca.sort_order
        FROM material_attributes ma
        JOIN category_attributes ca ON ca.id = ma.attribute_id
        WHERE ma.material_id IN (${placeholders})
@@ -125,18 +129,18 @@ export async function listMaterialAttributesBulk(
  */
 export async function createMaterial(
   db: D1Database,
-  input: { code: string; name: string; categoryId: number; attributes: AttributeValueInput[] },
+  input: { code: string; name: string; categoryId: number; quantity: number; attributes: AttributeValueInput[] },
 ): Promise<number> {
   const stmts = [
     db
-      .prepare("INSERT INTO materials (code, name, category_id) VALUES (?, ?, ?)")
-      .bind(input.code, input.name, input.categoryId),
+      .prepare("INSERT INTO materials (code, name, category_id, quantity) VALUES (?, ?, ?, ?)")
+      .bind(input.code, input.name, input.categoryId, input.quantity),
     ...input.attributes.map((a) =>
       db
         .prepare(
-          "INSERT INTO material_attributes (material_id, attribute_id, value) VALUES ((SELECT id FROM materials WHERE code = ?), ?, ?)",
+          "INSERT INTO material_attributes (material_id, attribute_id, value, unit) VALUES ((SELECT id FROM materials WHERE code = ?), ?, ?, ?)",
         )
-        .bind(input.code, a.attributeId, a.value),
+        .bind(input.code, a.attributeId, a.value, a.unit),
     ),
   ];
   await db.batch(stmts);
@@ -154,17 +158,17 @@ export async function createMaterial(
  */
 export async function updateMaterial(
   db: D1Database,
-  input: { id: number; name: string; categoryId: number; attributes: AttributeValueInput[] },
+  input: { id: number; name: string; categoryId: number; quantity: number; attributes: AttributeValueInput[] },
 ): Promise<void> {
   const stmts = [
     db
-      .prepare("UPDATE materials SET name = ?, category_id = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL")
-      .bind(input.name, input.categoryId, input.id),
+      .prepare("UPDATE materials SET name = ?, category_id = ?, quantity = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL")
+      .bind(input.name, input.categoryId, input.quantity, input.id),
     db.prepare("DELETE FROM material_attributes WHERE material_id = ?").bind(input.id),
     ...input.attributes.map((a) =>
       db
-        .prepare("INSERT INTO material_attributes (material_id, attribute_id, value) VALUES (?, ?, ?)")
-        .bind(input.id, a.attributeId, a.value),
+        .prepare("INSERT INTO material_attributes (material_id, attribute_id, value, unit) VALUES (?, ?, ?, ?)")
+        .bind(input.id, a.attributeId, a.value, a.unit),
     ),
   ];
   await db.batch(stmts);

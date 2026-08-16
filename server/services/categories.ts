@@ -18,6 +18,7 @@ export async function listAttributes(db: D1Database, categoryId: number): Promis
     name: r.name,
     type: r.type,
     unit: r.unit,
+    unitOptions: parseOptions(r.unit_options),
     required: r.required === 1,
     sortOrder: r.sort_order,
     options: parseOptions(r.options),

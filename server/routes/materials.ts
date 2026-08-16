@@ -44,7 +44,22 @@ function parseMaterialPayload(data: unknown): MaterialPayload {
       attributes[key] = value === null || value === undefined ? "" : String(value);
     }
   }
-  return { name, categoryId, attributes };
+
+  const attributeUnits: Record<string, string> = {};
+  if (d.attributeUnits !== undefined) {
+    if (typeof d.attributeUnits !== "object" || d.attributeUnits === null || Array.isArray(d.attributeUnits)) {
+      throw badRequest("单位格式错误");
+    }
+    for (const [key, value] of Object.entries(d.attributeUnits as Record<string, unknown>)) {
+      attributeUnits[key] = value === null || value === undefined ? "" : String(value);
+    }
+  }
+
+  let quantity: number | undefined;
+  if (d.quantity !== undefined && d.quantity !== null) {
+    quantity = Number(d.quantity);
+  }
+  return { name, categoryId, attributes, attributeUnits, quantity };
 }
 
 // GET /api/materials?search=&categoryId=&page=&pageSize=

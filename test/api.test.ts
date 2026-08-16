@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { SELF, applyD1Migrations, env } from "cloudflare:test";
 import initialSql from "../migrations/0001_initial.sql?raw";
 import seedSql from "../migrations/0002_seed_categories.sql?raw";
+import unitOptionsSql from "../migrations/0003_unit_options.sql?raw";
+import quantitySql from "../migrations/0004_material_quantity.sql?raw";
 import type {
   ApiErrorBody,
   Category,
@@ -41,6 +43,7 @@ async function fetchAttrIds(categoryId: number): Promise<Map<string, number>> {
 }
 
 let capIds: Map<string, number>;
+let resIds: Map<string, number>;
 let icIds: Map<string, number>;
 
 /**
@@ -62,8 +65,11 @@ beforeAll(async () => {
   await applyD1Migrations(env.DB, [
     { name: "0001_initial", queries: splitSqlStatements(initialSql) },
     { name: "0002_seed_categories", queries: splitSqlStatements(seedSql) },
+    { name: "0003_unit_options", queries: splitSqlStatements(unitOptionsSql) },
+    { name: "0004_material_quantity", queries: splitSqlStatements(quantitySql) },
   ]);
   capIds = await fetchAttrIds(2); // 电容
+  resIds = await fetchAttrIds(1); // 电阻
   icIds = await fetchAttrIds(7); // IC
 });
 
@@ -104,6 +110,7 @@ describe("健康检查与分类", () => {
     expect(cap).toBeDefined();
     expect(cap!.type).toBe("number");
     expect(cap!.unit).toBe("nF");
+    expect(cap!.unitOptions).toEqual(["pF", "nF", "uF"]);
     expect(cap!.required).toBe(true);
     const pack = body.find((a) => a.name === "封装");
     expect(pack!.type).toBe("select");
@@ -130,6 +137,7 @@ describe("创建物料", () => {
     expect(cap.code).toMatch(/^C\d{6}$/);
     expect(cap.name).toBe("贴片陶瓷电容");
     expect(cap.category).toEqual({ id: 2, name: "电容" });
+    expect(cap.quantity).toBe(0);
     // 分类的全部参数都会被回写，未填的为空字符串。
     expect(cap.attributes).toHaveLength(5);
     const capacity = cap.attributes.find((a) => a.id === capIds.get("容量"));
@@ -220,6 +228,126 @@ describe("创建物料", () => {
       body: "{not valid json",
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("可选单位", () => {
+  it("电阻「阻值」与电容「容量」暴露可选单位", async () => {
+    const res = await api<CategoryAttribute[]>("/api/categories/1/attributes");
+    expect(res.status).toBe(200);
+    const resi = res.body.find((a) => a.name === "阻值");
+    expect(resi?.unitOptions).toEqual(["Ω", "kΩ", "MΩ"]);
+
+    const cap = await api<CategoryAttribute[]>("/api/categories/2/attributes");
+    const capacity = cap.body.find((a) => a.name === "容量");
+    expect(capacity?.unitOptions).toEqual(["pF", "nF", "uF"]);
+  });
+
+  it("创建时选择单位会被保存并返回", async () => {
+    const { status, body } = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "带单位电阻",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "4.7" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+      }),
+    );
+    expect(status).toBe(201);
+    const resi = body.attributes.find((a) => a.id === resIds.get("阻值"));
+    expect(resi?.value).toBe("4.7");
+    expect(resi?.unit).toBe("kΩ");
+  });
+
+  it("未选单位时沿用默认单位", async () => {
+    const cap = await createCap("默认单位电容", "100");
+    const capacity = cap.attributes.find((a) => a.id === capIds.get("容量"));
+    expect(capacity?.unit).toBe("nF");
+  });
+
+  it("单位非法返回 400", async () => {
+    const { status, body } = await api<ApiErrorBody>(
+      "/api/materials",
+      json("POST", {
+        name: "非法单位",
+        categoryId: 2,
+        attributes: capAttributes("1"),
+        attributeUnits: { [String(capIds.get("容量")!)]: "V" },
+      }),
+    );
+    expect(status).toBe(400);
+    expect(body.error.message).toContain("单位无效");
+  });
+
+  it("伪造单位属性 id 返回 400", async () => {
+    const { status } = await api<ApiErrorBody>(
+      "/api/materials",
+      json("POST", {
+        name: "伪造单位",
+        categoryId: 2,
+        attributes: capAttributes("1"),
+        attributeUnits: { "999999": "kΩ" },
+      }),
+    );
+    expect(status).toBe(400);
+  });
+
+  it("按「值+所选单位」组合搜索（如 4.7kΩ）", async () => {
+    const { status, body: created } = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "组合单位搜索",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "4.7" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+      }),
+    );
+    expect(status).toBe(201);
+    const { body } = await api<MaterialListResponse>(`/api/materials?search=${encodeURIComponent("4.7kΩ")}`);
+    expect(body.items.some((i) => i.id === created.id)).toBe(true);
+  });
+});
+
+describe("剩余数量", () => {
+  it("默认剩余数量为 0", async () => {
+    const cap = await createCap("默认库存物料", "10");
+    expect(cap.quantity).toBe(0);
+  });
+
+  it("创建时可设置剩余数量", async () => {
+    const { status, body } = await api<Material>(
+      "/api/materials",
+      json("POST", { name: "带库存物料", categoryId: 2, attributes: capAttributes("10"), quantity: 1000 }),
+    );
+    expect(status).toBe(201);
+    expect(body.quantity).toBe(1000);
+  });
+
+  it("更新时可修改剩余数量", async () => {
+    const cap = await createCap("更新库存前", "10");
+    const { status, body } = await api<Material>(
+      `/api/materials/${cap.id}`,
+      json("PUT", { name: "更新库存前", categoryId: 2, attributes: capAttributes("10"), quantity: 50 }),
+    );
+    expect(status).toBe(200);
+    expect(body.quantity).toBe(50);
+  });
+
+  it("剩余数量为负数返回 400", async () => {
+    const { status, body } = await api<ApiErrorBody>(
+      "/api/materials",
+      json("POST", { name: "负数库存", categoryId: 2, attributes: capAttributes("1"), quantity: -1 }),
+    );
+    expect(status).toBe(400);
+    expect(body.error.message).toContain("剩余数量");
+  });
+
+  it("剩余数量非整数返回 400", async () => {
+    const { status } = await api<ApiErrorBody>(
+      "/api/materials",
+      json("POST", { name: "小数库存", categoryId: 2, attributes: capAttributes("1"), quantity: 1.5 }),
+    );
+    expect(status).toBe(400);
   });
 });
 

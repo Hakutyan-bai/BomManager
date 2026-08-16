@@ -40,6 +40,11 @@ export function MaterialDetailModal({
             <span className="text-gray-900">{material.category.name}</span>
           </div>
 
+          <div className="mt-2 flex gap-3 text-sm">
+            <span className="w-16 shrink-0 text-gray-400">剩余数量</span>
+            <span className="text-gray-900">{material.quantity}</span>
+          </div>
+
           <div className="mt-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">参数</p>
             <div className="mt-2 divide-y divide-gray-100 border-y border-gray-100">

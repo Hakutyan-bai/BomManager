@@ -17,6 +17,7 @@ export interface CategoryAttributeRow {
   name: string;
   type: "text" | "number" | "select";
   unit: string;
+  unit_options: string | null;
   required: number;
   sort_order: number;
   options: string | null;
@@ -26,6 +27,7 @@ export interface MaterialRow {
   id: number;
   code: string;
   name: string;
+  quantity: number;
   category_id: number;
   category_name: string;
   created_at: string;

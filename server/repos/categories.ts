@@ -21,7 +21,7 @@ export async function listAttributesByCategory(
 ): Promise<CategoryAttributeRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT id, category_id, name, type, unit, required, sort_order, options
+      `SELECT id, category_id, name, type, unit, unit_options, required, sort_order, options
        FROM category_attributes
        WHERE category_id = ?
        ORDER BY sort_order ASC, id ASC`,

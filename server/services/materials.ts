@@ -36,21 +36,29 @@ function mapMaterial(row: MaterialRow, attrs: MaterialAttributeValueRow[]): Mate
     code: row.code,
     name: row.name,
     category: { id: row.category_id, name: row.category_name },
+    quantity: row.quantity,
     attributes: attrs.map(mapAttributeValue),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-/** 校验参数值并组装最终要写入的「属性 id → 值」列表（含空值，保持物料参数完整）。 */
+/** 校验参数值并组装最终要写入的「属性 id → 值 / 单位」列表（含空值，保持物料参数完整）。 */
 function validateAndBuildValues(
   attrs: CategoryAttributeRow[],
   input: Record<string, string>,
+  units: Record<string, string> = {},
 ): AttributeValueInput[] {
   const byId = new Map(attrs.map((a) => [a.id, a]));
 
   // 拒绝不属于该分类的参数，防止伪造 attributeId。
   for (const key of Object.keys(input)) {
+    const id = Number(key);
+    if (!Number.isInteger(id) || !byId.has(id)) {
+      throw badRequest("参数不存在");
+    }
+  }
+  for (const key of Object.keys(units)) {
     const id = Number(key);
     if (!Number.isInteger(id) || !byId.has(id)) {
       throw badRequest("参数不存在");
@@ -76,9 +84,29 @@ function validateAndBuildValues(
         }
       }
     }
-    result.push({ attributeId: attr.id, value });
+
+    // 单位：仅当参数配置了可选单位集合时才记录所选单位，否则沿用分类固定单位（空字符串）。
+    const unitOptions = parseOptions(attr.unit_options);
+    let unit = "";
+    if (unitOptions.length > 0) {
+      const requested = units[String(attr.id)]?.trim();
+      const chosen = requested || (unitOptions.includes(attr.unit) ? attr.unit : unitOptions[0]);
+      if (!unitOptions.includes(chosen)) {
+        throw badRequest(`「${attr.name}」的单位无效`);
+      }
+      unit = chosen;
+    }
+
+    result.push({ attributeId: attr.id, value, unit });
   }
   return result;
+}
+
+/** 校验剩余数量：省略或空视为 0，否则必须为非负整数。 */
+function parseQuantity(raw: number | undefined): number {
+  const q = raw ?? 0;
+  if (!Number.isInteger(q) || q < 0) throw badRequest("剩余数量必须为非负整数");
+  return q;
 }
 
 /** 按分类前缀生成下一个物料编号，如 C000001。 */
@@ -115,6 +143,7 @@ export async function listMaterials(db: D1Database, params: ListMaterialsParams)
     code: r.code,
     name: r.name,
     category: { id: r.category_id, name: r.category_name },
+    quantity: r.quantity,
     attributes: (byMaterial.get(r.id) ?? []).map(mapAttributeValue),
   }));
 
@@ -142,14 +171,15 @@ export async function createMaterial(db: D1Database, payload: MaterialPayload): 
   if (!category) throw notFound("分类不存在");
 
   const attrs = await categoryRepo.listAttributesByCategory(db, category.id);
-  const values = validateAndBuildValues(attrs, payload.attributes);
+  const values = validateAndBuildValues(attrs, payload.attributes, payload.attributeUnits);
+  const quantity = parseQuantity(payload.quantity);
   const prefix = category.code_prefix || "M";
 
   // 编码唯一约束兜底：并发下偶发冲突则重新生成并重试。
   for (let attempt = 0; attempt < 3; attempt++) {
     const code = await generateCode(db, prefix);
     try {
-      const id = await materialRepo.createMaterial(db, { code, name, categoryId: category.id, attributes: values });
+      const id = await materialRepo.createMaterial(db, { code, name, categoryId: category.id, quantity, attributes: values });
       return await getMaterialOrThrow(db, id);
     } catch (err) {
       if (!isUniqueCodeViolation(err)) throw err;
@@ -170,9 +200,10 @@ export async function updateMaterial(db: D1Database, id: number, payload: Materi
   if (!category) throw notFound("分类不存在");
 
   const attrs = await categoryRepo.listAttributesByCategory(db, category.id);
-  const values = validateAndBuildValues(attrs, payload.attributes);
+  const values = validateAndBuildValues(attrs, payload.attributes, payload.attributeUnits);
+  const quantity = parseQuantity(payload.quantity);
 
-  await materialRepo.updateMaterial(db, { id, name, categoryId: category.id, attributes: values });
+  await materialRepo.updateMaterial(db, { id, name, categoryId: category.id, quantity, attributes: values });
   return await getMaterialOrThrow(db, id);
 }
 

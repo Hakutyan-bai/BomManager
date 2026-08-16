@@ -30,11 +30,13 @@ test/             Vitest 集成测试
 | 表 | 说明 |
 | --- | --- |
 | `categories` | 物料分类（含 `code_prefix` 编码前缀） |
-| `category_attributes` | 分类参数定义（text / number / select、单位、是否必填、选项） |
-| `materials` | 物料（`code` 自动生成、唯一；软删除 `deleted_at`） |
-| `material_attributes` | 物料参数值（`UNIQUE(material_id, attribute_id)`） |
+| `category_attributes` | 分类参数定义（text / number / select、单位、可选单位 `unit_options`、是否必填、选项） |
+| `materials` | 物料（`code` 自动生成、唯一；剩余数量 `quantity`；软删除 `deleted_at`） |
+| `material_attributes` | 物料参数值（含覆盖单位 `unit`，`UNIQUE(material_id, attribute_id)`） |
 
 内置 9 个分类：电阻 `R`、电容 `C`、电感 `L`、二极管 `D`、三极管 `T`、MOSFET `Q`、IC `U`、连接器 `J`、其他 `M`。
+
+number 类型参数可配置 `unit_options` 供录入时选择单位（如电阻「阻值」Ω / kΩ / MΩ、电容「容量」pF / nF / uF）；所选单位随参数值一起存储。物料另有一个独立的「剩余数量」字段（件），作为后续入库/出库功能的基础。
 
 ## 快速开始
 
@@ -75,7 +77,7 @@ npm run dev
 | GET | `/api/categories/:id/attributes` | 某分类的参数定义 |
 | GET | `/api/materials?search=&categoryId=&page=&pageSize=` | 物料列表（搜索/筛选/分页） |
 | GET | `/api/materials/:id` | 物料详情 |
-| POST | `/api/materials` | 创建物料（`{ name, categoryId, attributes }`） |
+| POST | `/api/materials` | 创建物料（`{ name, categoryId, attributes, attributeUnits?, quantity? }`） |
 | PUT | `/api/materials/:id` | 更新物料 |
 | DELETE | `/api/materials/:id` | 软删除（幂等） |
 
