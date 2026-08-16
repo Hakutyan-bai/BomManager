@@ -34,7 +34,7 @@ test/             Vitest 集成测试
 | `materials` | 物料（`code` 自动生成、唯一；剩余数量 `quantity`；软删除 `deleted_at`） |
 | `material_attributes` | 物料参数值（含覆盖单位 `unit`，`UNIQUE(material_id, attribute_id)`） |
 
-内置 9 个分类：电阻 `R`、电容 `C`、电感 `L`、二极管 `D`、三极管 `T`、MOSFET `Q`、IC `U`、连接器 `J`、其他 `M`。
+内置 10 个分类：电阻 `R`、电容 `C`、电感 `L`、二极管 `D`、三极管 `T`、MOSFET `Q`、IC `U`、连接器 `J`、贴片LED `LED`、其他 `M`。
 
 number 类型参数可配置 `unit_options` 供录入时选择单位（如电阻「阻值」Ω / kΩ / MΩ、电容「容量」pF / nF / uF）；所选单位随参数值一起存储。物料另有一个独立的「剩余数量」字段（件），作为后续入库/出库功能的基础。
 

@@ -4,6 +4,7 @@ import initialSql from "../migrations/0001_initial.sql?raw";
 import seedSql from "../migrations/0002_seed_categories.sql?raw";
 import unitOptionsSql from "../migrations/0003_unit_options.sql?raw";
 import quantitySql from "../migrations/0004_material_quantity.sql?raw";
+import ledSql from "../migrations/0005_seed_led.sql?raw";
 import type {
   ApiErrorBody,
   Category,
@@ -45,6 +46,7 @@ async function fetchAttrIds(categoryId: number): Promise<Map<string, number>> {
 let capIds: Map<string, number>;
 let resIds: Map<string, number>;
 let icIds: Map<string, number>;
+let ledIds: Map<string, number>;
 
 /**
  * 去除行注释并按分号切分为单条 SQL。本项目的迁移文件较简单，
@@ -67,10 +69,12 @@ beforeAll(async () => {
     { name: "0002_seed_categories", queries: splitSqlStatements(seedSql) },
     { name: "0003_unit_options", queries: splitSqlStatements(unitOptionsSql) },
     { name: "0004_material_quantity", queries: splitSqlStatements(quantitySql) },
+    { name: "0005_seed_led", queries: splitSqlStatements(ledSql) },
   ]);
   capIds = await fetchAttrIds(2); // 电容
   resIds = await fetchAttrIds(1); // 电阻
   icIds = await fetchAttrIds(7); // IC
+  ledIds = await fetchAttrIds(10); // 贴片LED
 });
 
 function capAttributes(capacity: string, overrides: Record<string, string> = {}): Record<string, string> {
@@ -93,12 +97,13 @@ describe("健康检查与分类", () => {
     expect(body.ok).toBe(true);
   });
 
-  it("列出 9 个分类", async () => {
+  it("列出 10 个分类", async () => {
     const { status, body } = await api<Category[]>("/api/categories");
     expect(status).toBe(200);
-    expect(body).toHaveLength(9);
+    expect(body).toHaveLength(10);
     expect(body.map((c) => c.name)).toContain("电阻");
     expect(body.map((c) => c.name)).toContain("电容");
+    expect(body.map((c) => c.name)).toContain("贴片LED");
     expect(body.map((c) => c.name)).toContain("其他");
   });
 
@@ -348,6 +353,30 @@ describe("剩余数量", () => {
       json("POST", { name: "小数库存", categoryId: 2, attributes: capAttributes("1"), quantity: 1.5 }),
     );
     expect(status).toBe(400);
+  });
+});
+
+describe("贴片LED", () => {
+  it("读取贴片LED分类的参数定义", async () => {
+    const { status, body } = await api<CategoryAttribute[]>("/api/categories/10/attributes");
+    expect(status).toBe(200);
+    const color = body.find((a) => a.name === "颜色");
+    expect(color?.type).toBe("select");
+    expect(color?.required).toBe(true);
+    expect(color?.options).toContain("红");
+    const vf = body.find((a) => a.name === "正向电压");
+    expect(vf?.type).toBe("number");
+    expect(vf?.unit).toBe("V");
+  });
+
+  it("创建贴片LED自动生成 LED 前缀编号", async () => {
+    const { status, body } = await api<Material>(
+      "/api/materials",
+      json("POST", { name: "红色贴片LED", categoryId: 10, attributes: { [String(ledIds.get("颜色")!)]: "红" } }),
+    );
+    expect(status).toBe(201);
+    expect(body.code.startsWith("LED")).toBe(true);
+    expect(body.category).toEqual({ id: 10, name: "贴片LED" });
   });
 });
 
