@@ -227,42 +227,51 @@ export function MaterialFormModal({
           />
         </Field>
 
-        <Field label="分类" required>
-          <Select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value === "" ? "" : Number(e.target.value))}
-            className="w-full"
-          >
-            <option value="">请选择分类</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="分类" required>
+            <Select
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value === "" ? "" : Number(e.target.value))}
+              className="w-full"
+            >
+              <option value="">请选择分类</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
 
-        <Field label="剩余数量" hint="件（当前库存数量，可为 0）">
-          <Input
-            type="number"
-            min="0"
-            step="1"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            placeholder="0"
-          />
-        </Field>
+          <Field label="剩余数量" hint="当前库存，可为 0">
+            <div className="relative">
+              <Input
+                type="number"
+                min="0"
+                step="1"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="0"
+                className="pr-10"
+              />
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-[#7a877f]">件</span>
+            </div>
+          </Field>
+        </div>
 
         {categoryId !== "" && (
-          <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">参数</p>
+          <section className="space-y-4 border-t border-[#d7ded9] pt-4">
+            <div>
+              <h3 className="text-sm font-semibold text-[#34423b]">物料参数</h3>
+              <p className="mt-0.5 text-xs text-[#7a877f]">参数会参与 BOM 智能匹配</p>
+            </div>
             {loadingAttrs && (
-              <div className="flex justify-center py-2 text-gray-400">
+              <div className="flex justify-center py-3 text-[#7a877f]">
                 <Spinner />
               </div>
             )}
             {!loadingAttrs && attrDefs.length === 0 && (
-              <p className="text-sm text-gray-400">该分类暂无参数定义</p>
+              <p className="border-y border-[#e6ebe7] py-3 text-sm text-[#7a877f]">该分类暂无参数定义</p>
             )}
             {!loadingAttrs &&
               attrDefs.map((a) => (
@@ -276,10 +285,10 @@ export function MaterialFormModal({
                   )}
                 </Field>
               ))}
-          </div>
+          </section>
         )}
 
-        {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+        {error && <div className="border-l-2 border-[#b74640] bg-[#fbf2f1] px-3 py-2 text-sm text-[#a43f3a]">{error}</div>}
       </form>
     </Modal>
   );

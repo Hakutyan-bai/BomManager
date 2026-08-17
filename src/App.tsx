@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Boxes, FileSpreadsheet, Plus } from "lucide-react";
 import type { Material, MaterialListItem } from "../shared/types";
 import { deleteMaterial, getMaterial } from "./lib/api";
 import { useCategories } from "./hooks/useCategories";
@@ -23,14 +24,12 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  // 搜索/筛选/每页条数变化时回到第一页。
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch, categoryId, pageSize]);
 
   const { data, loading, error, refresh } = useMaterials({ search: debouncedSearch, categoryId, page, pageSize });
 
-  // 弹窗状态。
   const [formOpen, setFormOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<EditableMaterial | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -47,20 +46,20 @@ export default function App() {
     setFormOpen(true);
   }
 
-  function openEdit(m: MaterialListItem) {
-    setEditingMaterial(m);
+  function openEdit(material: MaterialListItem) {
+    setEditingMaterial(material);
     setFormOpen(true);
   }
 
-  async function openView(m: MaterialListItem) {
+  async function openView(material: MaterialListItem) {
     setDetailOpen(true);
     setDetailLoading(true);
     setDetailError(null);
     setDetailMaterial(null);
     try {
-      setDetailMaterial(await getMaterial(m.id));
-    } catch (e) {
-      setDetailError(e instanceof Error ? e.message : "加载详情失败");
+      setDetailMaterial(await getMaterial(material.id));
+    } catch (requestError) {
+      setDetailError(requestError instanceof Error ? requestError.message : "加载详情失败");
     } finally {
       setDetailLoading(false);
     }
@@ -85,41 +84,67 @@ export default function App() {
       await deleteMaterial(deleteTarget.id);
       setDeleteTarget(null);
       refresh();
-    } catch (e) {
-      setDeleteError(e instanceof Error ? e.message : "删除失败");
+    } catch (requestError) {
+      setDeleteError(requestError instanceof Error ? requestError.message : "删除失败");
     } finally {
       setDeleting(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <h1 className="text-lg font-semibold text-gray-900">物料中心</h1>
-          <div className="flex items-center gap-2">
-            <Button onClick={() => setBomOpen(true)}>BOM 查询</Button>
-            <Button variant="primary" onClick={openCreate}>
-              <span aria-hidden>+</span> 添加物料
+    <div className="min-h-screen bg-[#f5f7f5]">
+      <header className="border-b border-[#d7ded9] bg-white">
+        <div className="mx-auto flex max-w-[1180px] flex-col gap-2.5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[#146b52] text-white shadow-[0_1px_3px_rgba(15,40,31,0.2)]">
+              <Boxes size={19} strokeWidth={1.8} aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-display text-[17px] font-semibold text-[#19231f] sm:text-[19px]">物料中心</h1>
+              <p className="hidden text-xs text-[#7a877f] sm:block">电子物料库存与 BOM 匹配</p>
+            </div>
+          </div>
+
+          <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex sm:items-center">
+            <Button onClick={() => setBomOpen(true)} className="w-full px-2.5 sm:w-auto sm:px-3.5">
+              <FileSpreadsheet size={17} strokeWidth={1.8} aria-hidden />
+              <span className="hidden sm:inline">BOM 查询</span>
+              <span className="sm:hidden">BOM</span>
+            </Button>
+            <Button variant="primary" onClick={openCreate} className="w-full px-2.5 sm:w-auto sm:px-3.5">
+              <Plus size={17} strokeWidth={2} aria-hidden />
+              <span className="hidden sm:inline">添加物料</span>
+              <span className="sm:hidden">添加</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-4 px-4 py-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="sm:w-80">
+      <main className="mx-auto max-w-[1180px] px-4 py-5 sm:px-6 sm:py-7">
+        <div className="flex flex-col gap-3 border-b border-[#d7ded9] pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="w-full sm:max-w-md">
             <SearchBar value={searchInput} onChange={setSearchInput} />
           </div>
+          <p className="font-data shrink-0 text-xs text-[#6b7871]" aria-live="polite">
+            {loading && !data ? "正在读取库存…" : `检索到 ${data?.total ?? 0} 项物料`}
+          </p>
         </div>
 
-        <CategoryFilter categories={categories} selected={categoryId} onSelect={setCategoryId} />
+        <div className="py-4">
+          <CategoryFilter categories={categories} selected={categoryId} onSelect={setCategoryId} />
+        </div>
 
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+        <section className="overflow-hidden rounded-[8px] border border-[#d7ded9] bg-white shadow-[0_2px_10px_rgba(25,35,31,0.04)]" aria-label="物料列表">
           {categoriesError && (
-            <div className="border-b border-gray-200 px-4 py-3 text-sm text-red-600">加载分类失败：{categoriesError}</div>
+            <div className="border-b border-[#ead0ce] bg-[#fbf2f1] px-4 py-3 text-sm text-[#a43f3a]">
+              加载分类失败：{categoriesError}
+            </div>
           )}
-          {error && <div className="border-b border-gray-200 px-4 py-3 text-sm text-red-600">加载物料失败：{error}</div>}
+          {error && (
+            <div className="border-b border-[#ead0ce] bg-[#fbf2f1] px-4 py-3 text-sm text-[#a43f3a]">
+              加载物料失败：{error}
+            </div>
+          )}
           <MaterialTable
             items={data?.items ?? []}
             loading={loading}
@@ -128,7 +153,7 @@ export default function App() {
             onDelete={setDeleteTarget}
           />
           {data && data.total > 0 && (
-            <div className="border-t border-gray-200 px-4 py-3">
+            <div className="border-t border-[#d7ded9] bg-[#fafbfa] px-3 py-3 sm:px-4">
               <Pagination
                 page={page}
                 pageSize={pageSize}
@@ -138,7 +163,7 @@ export default function App() {
               />
             </div>
           )}
-        </div>
+        </section>
       </main>
 
       <MaterialFormModal

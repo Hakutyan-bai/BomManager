@@ -1,10 +1,65 @@
 @import "tailwindcss";
 
+:root {
+  font-family: "Segoe UI Variable", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  color: #19231f;
+  background: #f5f7f5;
+  font-synthesis: none;
+}
+
 html {
+  min-width: 320px;
+  background: #eef1ee;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  @apply bg-gray-50 text-gray-900;
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: #f5f7f5;
+  color: #19231f;
+}
+
+button,
+input,
+select {
+  letter-spacing: 0;
+}
+
+button,
+label,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  color: #ffffff;
+  background: #146b52;
+}
+
+.font-display {
+  font-family: Bahnschrift, "Segoe UI Variable", "Microsoft YaHei UI", sans-serif;
+}
+
+.font-data {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.scrollbar-subtle {
+  scrollbar-color: #bdc7c0 transparent;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
