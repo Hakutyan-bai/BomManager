@@ -1071,6 +1071,36 @@ describe("BOM 匹配", () => {
     expect(body.notFound.map((n) => n.model)).toEqual(["68Ω 电阻", "LED_0805 发光二极管", "AO3416"]);
   });
 
+  it("贴片 LED 可用同分类小一档封装替代", async () => {
+    const { status } = await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "0603贴片LED",
+        categoryId: 10,
+        attributes: {
+          [String(ledIds.get("颜色")!)]: "红",
+          [String(ledIds.get("封装")!)]: "0603",
+        },
+        quantity: 20,
+      }),
+    );
+    expect(status).toBe(201);
+
+    const need0805 = await match([
+      { model: "LED_0805 发光二极管", designator: "LED1", package: "LED_0805", quantity: 5 },
+    ]);
+    expect(need0805.body.have).toHaveLength(0);
+    expect(need0805.body.substitute).toHaveLength(1);
+    expect(need0805.body.substitute[0].material.name).toBe("0603贴片LED");
+    expect(need0805.body.substitute[0].substituteReasons).toContain("封装小一档");
+
+    const need1206 = await match([
+      { model: "LED_1206 发光二极管", designator: "LED2", package: "LED_1206", quantity: 1 },
+    ]);
+    expect(need1206.body.substitute).toHaveLength(0);
+    expect(need1206.body.notFound).toHaveLength(1);
+  });
+
   it("未收录：无法匹配的型号", async () => {
     const { status, body } = await match([{ model: "完全不存在的物料XYZ123", designator: "U9", quantity: 1 }]);
     expect(status).toBe(200);

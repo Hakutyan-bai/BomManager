@@ -380,8 +380,10 @@ function evaluateMatch(item: BomItem, m: MaterialForMatch, categories: Set<strin
     score = 30;
   }
 
-  // 封装小一档只适用于能确认主规格相同的电阻/电容/电感。
-  const compatibility = evaluateCompatibility(item, m, bomSecondary, primaryHit);
+  // 电阻/电容/电感通过主规格确认同类；贴片 LED 可通过分类确认同类。
+  // 其它无主规格分类仍不允许仅凭封装做替代，避免宽泛误配。
+  const ledCategoryMatch = categories.has("贴片LED") && m.categoryName === "贴片LED";
+  const compatibility = evaluateCompatibility(item, m, bomSecondary, primaryHit || ledCategoryMatch);
   if (!compatibility) return null;
 
   // 通用描述型必须能由分类 + 精确封装定位，不能只凭一个宽泛名称匹配。
@@ -390,7 +392,8 @@ function evaluateMatch(item: BomItem, m: MaterialForMatch, categories: Set<strin
     isGenericModel(item.model) &&
     categories.size > 0 &&
     categories.has(m.categoryName) &&
-    compatibility.packageExact
+    (compatibility.packageExact ||
+      (ledCategoryMatch && compatibility.substituteReasons.includes("封装小一档")))
   ) {
     score = 20;
   }

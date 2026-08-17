@@ -55,10 +55,15 @@ function parseQuantity(raw: string | number | boolean | undefined): number {
 export async function parseBomFile(data: ArrayBuffer): Promise<BomItem[]> {
   // 动态导入 xlsx（约 400KB），仅在真正解析 BOM 时加载，避免拖慢首屏。
   const XLSX = await import("xlsx");
-  const wb = XLSX.read(data, { type: "array" });
+  // cellStyles 会同时加载 !rows / !cols 元数据，skipHidden 才能识别隐藏行。
+  const wb = XLSX.read(data, { type: "array", cellStyles: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
   if (!ws) throw new Error("文件中没有工作表");
-  const rows = XLSX.utils.sheet_to_json<(string | number | boolean)[]>(ws, { header: 1, defval: "" });
+  const rows = XLSX.utils.sheet_to_json<(string | number | boolean)[]>(ws, {
+    header: 1,
+    defval: "",
+    skipHidden: true,
+  });
 
   const headerIndex = findHeaderRow(rows);
   if (headerIndex < 0) throw new Error("未找到表头（需包含「型号」或 Name 列）");
