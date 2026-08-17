@@ -142,9 +142,11 @@ export function extractSpecValues(text: string): SpecValue[] {
     const prefixRaw = m[2] ?? "";
     const unitRaw = m[3];
 
-    // "R"/"r" 后缀 = 欧姆。
+    // "R"/"r" 后缀 = 欧姆；允许 33KR / 1MR 这类带倍率前缀的写法。
     if (/^[rR]$/.test(unitRaw)) {
-      out.push({ family: "ohm", value: num, primary: true });
+      const key = prefixRaw === "M" ? "M" : prefixRaw.toLowerCase();
+      const mult = BASE_MULT.ohm[key];
+      if (mult !== undefined) out.push({ family: "ohm", value: num * mult, primary: true });
       continue;
     }
     const pu = parseUnit(prefixRaw + unitRaw);
@@ -292,103 +294,121 @@ function packageRelation(bomPkg: string, matPkg: string): "unknown" | "exact" | 
   return "mismatch";
 }
 
-/** 耐压约束：BOM 有电压要求时，物料额定电压不得低于要求（可高不可低）。 */
-function voltageOk(bomSecondary: SpecValue[], m: MaterialForMatch): boolean {
-  const bomVoltage = bomSecondary.filter((s) => s.family === "v").map((s) => s.value);
-  if (bomVoltage.length === 0 || m.voltageRating == null) return true;
-  const required = Math.max(...bomVoltage);
-  return m.voltageRating >= required || approxEqual(m.voltageRating, required);
+interface MatchEvaluation {
+  score: number;
+  substituteReasons: string[];
+}
+
+const SOFT_SPEC_LABELS: Partial<Record<Family, string>> = {
+  pct: "容差/精度不同",
+  w: "功率不同",
+  a: "电流不同",
+};
+
+/**
+ * 校验封装与次要规格，并返回需要人工确认的原因。
+ * 电压是硬下限：低于需求或额定值未知时拒绝，高于需求时可替代。
+ * 容差、功率、电流不一致或未填写时不拒绝，但必须标为可替代。
+ */
+function evaluateCompatibility(
+  item: BomItem,
+  m: MaterialForMatch,
+  bomSecondary: SpecValue[],
+  allowPackageSubstitute: boolean,
+): { packageExact: boolean; secondaryOverlap: number; substituteReasons: string[] } | null {
+  const reasons: string[] = [];
+  const relation = packageRelation(normalizePackage(item.package ?? ""), m.packageNorm);
+  if (relation === "mismatch") return null;
+  if (relation === "substitute") {
+    if (!allowPackageSubstitute) return null;
+    reasons.push("封装小一档");
+  }
+
+  const bomVoltages = bomSecondary.filter((s) => s.family === "v").map((s) => s.value);
+  if (bomVoltages.length > 0) {
+    const required = Math.max(...bomVoltages);
+    if (m.voltageRating == null || (m.voltageRating < required && !approxEqual(m.voltageRating, required))) {
+      return null;
+    }
+    if (!approxEqual(m.voltageRating, required)) reasons.push("耐压高于需求");
+  }
+
+  let secondaryOverlap = 0;
+  for (const family of ["pct", "w", "a"] as const) {
+    const requiredValues = bomSecondary.filter((s) => s.family === family);
+    if (requiredValues.length === 0) continue;
+    const exact = requiredValues.some((required) =>
+      m.secondaryValues.some((actual) => actual.family === family && approxEqual(actual.value, required.value)),
+    );
+    if (exact) secondaryOverlap++;
+    else reasons.push(SOFT_SPEC_LABELS[family]!);
+  }
+
+  return { packageExact: relation === "exact", secondaryOverlap, substituteReasons: reasons };
 }
 
 /**
  * 计算单个物料对单个 BOM 行的匹配得分；0 表示不匹配。
  *
- * 打分规则：
- *  1) 精确名称 → 100。
- *  2) 主规格值命中（同族等值）→ 55；若 BOM 主规格与物料同族但值不同 → 直接判 0（拒绝）。
- *  3) 封装：BOM 与物料都填写了封装且不一致 → 直接拒绝（避免 1206 误配到 0603/0805）；
- *     一致时主规格命中再加 15。
- *  4) 耐压约束：BOM 要求电压不得高于物料额定电压（可高不可低）。
- *  5) 次要规格（V/A/W/%）重叠加成。
- *  6) 分类推断一致 → +10。
- *  7) 无任何主规格命中时，名称子串兜底（用于零件号/IC）。
+ * 名称、主规格与分类决定候选强度；封装、电压及其它电气规格统一在
+ * evaluateCompatibility 中判断为「精确」「可替代」或「拒绝」。
  */
-export function matchScore(item: BomItem, m: MaterialForMatch, categories: Set<string>): number {
+function evaluateMatch(item: BomItem, m: MaterialForMatch, categories: Set<string>): MatchEvaluation | null {
   const nameNorm = normalize(item.model);
   const mNameNorm = normalize(m.name);
-
-  // 1) 精确名称（最强）。
-  if (nameNorm !== "" && nameNorm === mNameNorm) return 100;
-
   const bomSpecs = extractSpecValues(item.model);
   const bomPrimary = bomSpecs.filter((s) => s.primary);
   const bomSecondary = bomSpecs.filter((s) => !s.primary);
-  const rel = packageRelation(normalizePackage(item.package ?? ""), m.packageNorm);
-  const pkgMatch = rel === "exact";
-
-  // 1.5) 耐压约束。
-  if (!voltageOk(bomSecondary, m)) return 0;
-
-  // 1.6) 封装约束：精确匹配只接受「封装一致」或「一方缺封装」；替代/不符都拒绝。
-  if (rel === "mismatch" || rel === "substitute") return 0;
-
-  // 2) 主规格（阻值/容量/电感量）：BOM 含主规格时，必须同族等值命中；
-  //    封装只是加成，绝不单独构成匹配（避免「47Ω 电阻」误配到同封装的电容）。
-  if (bomPrimary.length > 0) {
-    const hit = bomPrimary.some((bp) =>
-      m.primaryValues.some((v) => v.family === bp.family && approxEqual(v.value, bp.value)),
-    );
-    if (!hit) return 0;
-
-    let score = 55;
-    if (pkgMatch) score += 15;
-    const overlap = bomSecondary.filter((b) =>
-      m.secondaryValues.some((v) => v.family === b.family && approxEqual(v.value, b.value)),
-    ).length;
-    score += Math.min(overlap, 2) * 5;
-    if (categories.size > 0 && categories.has(m.categoryName)) score += 10;
-    return score;
-  }
-
-  // 3) 名称子串（零件号，如 AO3416 / B5819W / S8050）。
-  if (nameNorm.length >= 3 && mNameNorm.length >= 3 && (nameNorm.includes(mNameNorm) || mNameNorm.includes(nameNorm))) {
-    let score = 30;
-    if (pkgMatch) score += 15;
-    if (categories.size > 0 && categories.has(m.categoryName)) score += 10;
-    return score;
-  }
-
-  // 4) 通用描述型（含中文类型词/LED）且无主规格/零件号时，用「分类 + 封装」兜底，
-  //    且分类必须一致（LED 不会误配到电容、三极管等）。
-  if (isGenericModel(item.model) && categories.size > 0 && categories.has(m.categoryName) && pkgMatch) {
-    return 20;
-  }
-
-  return 0;
-}
-
-/** 封装替代得分：仅当「主规格命中 + 物料封装比需求小一档 + 电压满足」时返回 > 0。 */
-function substituteScore(item: BomItem, m: MaterialForMatch, categories: Set<string>): number {
-  const bomSpecs = extractSpecValues(item.model);
-  const bomPrimary = bomSpecs.filter((s) => s.primary);
-  const bomSecondary = bomSpecs.filter((s) => !s.primary);
-  if (bomPrimary.length === 0) return 0; // 零件号/无主规格不做封装替代
-
-  if (packageRelation(normalizePackage(item.package ?? ""), m.packageNorm) !== "substitute") return 0;
-  if (!voltageOk(bomSecondary, m)) return 0;
-
-  const hit = bomPrimary.some((bp) =>
+  const exactName = nameNorm !== "" && nameNorm === mNameNorm;
+  const primaryHit = bomPrimary.some((bp) =>
     m.primaryValues.some((v) => v.family === bp.family && approxEqual(v.value, bp.value)),
   );
-  if (!hit) return 0;
 
-  let score = 45; // 替代物基础分低于精确匹配（55），且无封装加分
-  const overlap = bomSecondary.filter((b) =>
-    m.secondaryValues.some((v) => v.family === b.family && approxEqual(v.value, b.value)),
-  ).length;
-  score += Math.min(overlap, 2) * 5;
+  // 只要 BOM 中存在可解析的主规格，就必须与物料参数等值；名称相同也不能绕过。
+  if (bomPrimary.length > 0 && !primaryHit) return null;
+
+  let score = 0;
+  if (exactName) {
+    score = 100;
+  } else if (bomPrimary.length > 0) {
+    score = 55;
+  } else if (
+    nameNorm.length >= 3 &&
+    mNameNorm.length >= 3 &&
+    (nameNorm.includes(mNameNorm) || mNameNorm.includes(nameNorm))
+  ) {
+    score = 30;
+  }
+
+  // 封装小一档只适用于能确认主规格相同的电阻/电容/电感。
+  const compatibility = evaluateCompatibility(item, m, bomSecondary, primaryHit);
+  if (!compatibility) return null;
+
+  // 通用描述型必须能由分类 + 精确封装定位，不能只凭一个宽泛名称匹配。
+  if (
+    score === 0 &&
+    isGenericModel(item.model) &&
+    categories.size > 0 &&
+    categories.has(m.categoryName) &&
+    compatibility.packageExact
+  ) {
+    score = 20;
+  }
+  if (score === 0) return null;
+
+  if (compatibility.packageExact) score += 15;
+  score += Math.min(compatibility.secondaryOverlap, 2) * 5;
   if (categories.size > 0 && categories.has(m.categoryName)) score += 10;
-  return score;
+  return { score, substituteReasons: compatibility.substituteReasons };
+}
+
+/**
+ * 计算单个物料对单个 BOM 行的精确匹配得分；保留导出供测试/调试使用。
+ * 需要人工确认的候选不会作为精确匹配返回分数。
+ */
+export function matchScore(item: BomItem, m: MaterialForMatch, categories: Set<string>): number {
+  const result = evaluateMatch(item, m, categories);
+  return result && result.substituteReasons.length === 0 ? result.score : 0;
 }
 
 /** 从物料行 + 参数值构建匹配用的内部表示。 */
@@ -450,7 +470,7 @@ function toMaterialForMatch(
 }
 
 /** 把命中的物料组装成响应摘要（替代物与精确匹配共用同一结构）。 */
-function buildMatched(item: BomItem, m: MaterialForMatch): BomMatched {
+function buildMatched(item: BomItem, m: MaterialForMatch, substituteReasons: string[] = []): BomMatched {
   return {
     bom: item,
     material: {
@@ -462,6 +482,7 @@ function buildMatched(item: BomItem, m: MaterialForMatch): BomMatched {
       params: m.params,
     },
     shortfall: Math.max(0, item.quantity - m.quantity),
+    substituteReasons,
   };
 }
 
@@ -477,23 +498,32 @@ export function matchBomItems(
 
   for (const item of items) {
     const categories = inferCategories(item);
-    let bestExact: { material: MaterialForMatch; score: number } | null = null;
-    let bestSub: { material: MaterialForMatch; score: number } | null = null;
+    let bestExact: { material: MaterialForMatch; evaluation: MatchEvaluation } | null = null;
+    let bestSub: { material: MaterialForMatch; evaluation: MatchEvaluation } | null = null;
     for (const m of materials) {
-      const score = matchScore(item, m, categories);
-      if (score > 0 && (!bestExact || score > bestExact.score || (score === bestExact.score && m.quantity > bestExact.material.quantity))) {
-        bestExact = { material: m, score };
-      }
-      const sub = substituteScore(item, m, categories);
-      if (sub > 0 && (!bestSub || sub > bestSub.score || (sub === bestSub.score && m.quantity > bestSub.material.quantity))) {
-        bestSub = { material: m, score: sub };
+      const evaluation = evaluateMatch(item, m, categories);
+      if (!evaluation) continue;
+      const target = evaluation.substituteReasons.length === 0 ? "exact" : "substitute";
+      const current = target === "exact" ? bestExact : bestSub;
+      if (
+        !current ||
+        evaluation.score > current.evaluation.score ||
+        (evaluation.score === current.evaluation.score &&
+          evaluation.substituteReasons.length < current.evaluation.substituteReasons.length) ||
+        (evaluation.score === current.evaluation.score &&
+          evaluation.substituteReasons.length === current.evaluation.substituteReasons.length &&
+          m.quantity > current.material.quantity)
+      ) {
+        const candidate = { material: m, evaluation };
+        if (target === "exact") bestExact = candidate;
+        else bestSub = candidate;
       }
     }
 
     if (bestExact) {
       (bestExact.material.quantity > 0 ? have : outOfStock).push(buildMatched(item, bestExact.material));
     } else if (bestSub) {
-      substitute.push(buildMatched(item, bestSub.material));
+      substitute.push(buildMatched(item, bestSub.material, bestSub.evaluation.substituteReasons));
     } else {
       notFound.push(item);
     }

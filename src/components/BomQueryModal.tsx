@@ -57,6 +57,9 @@ function MatchedSection({
                   <td className="px-3 py-2">
                     <div className="text-sm text-gray-900">{r.material.name}</div>
                     <div className="text-xs text-gray-400">{r.material.params || r.material.categoryName}</div>
+                    {r.substituteReasons.length > 0 && (
+                      <div className="mt-1 text-xs text-blue-600">替代原因：{r.substituteReasons.join("、")}</div>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-sm text-gray-700">{r.material.stock}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-sm text-gray-700">{r.shortfall}</td>
@@ -175,7 +178,7 @@ export function BomQueryModal({ open, onClose }: { open: boolean; onClose: () =>
             共解析 {parsedCount} 行 · 有库存 {result.have.length} · 可替代 {result.substitute.length} · 缺货 {result.outOfStock.length} · 未收录 {result.notFound.length}
           </p>
           <MatchedSection title="有（不用买）" tone="green" rows={result.have} emptyHint="没有「有库存」的匹配项" />
-          <MatchedSection title="可替代（封装差一档）" tone="blue" rows={result.substitute} emptyHint="没有可替代的匹配项" />
+          <MatchedSection title="可替代（需人工确认）" tone="blue" rows={result.substitute} emptyHint="没有可替代的匹配项" />
           <MatchedSection title="缺货（库存 0）" tone="amber" rows={result.outOfStock} emptyHint="没有「缺货」的匹配项" />
           <NotFoundSection rows={result.notFound} />
         </div>

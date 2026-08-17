@@ -114,12 +114,14 @@ export interface BomMatched {
   material: BomMatchMaterial;
   /** 缺口 = max(0, 需求数量 - 剩余数量)。 */
   shortfall: number;
+  /** 为空表示精确匹配；非空时说明为什么需要用户确认替代。 */
+  substituteReasons: string[];
 }
 
 export interface BomMatchResponse {
   /** 匹配到且库存 > 0（不用买）。 */
   have: BomMatched[];
-  /** 无精确匹配时，封装差一档可替代的物料（如 0805 缺货用 0603 替代）。 */
+  /** 无精确匹配时可人工确认的替代物料（小一档封装、更高耐压或其它规格差异）。 */
   substitute: BomMatched[];
   /** 匹配到但库存 = 0（缺货）。 */
   outOfStock: BomMatched[];

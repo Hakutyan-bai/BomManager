@@ -692,10 +692,112 @@ describe("BOM 匹配", () => {
     expect(need50.body.outOfStock).toHaveLength(0);
     expect(need50.body.notFound.map((n) => n.model)).toEqual(["47uF 50V"]);
 
-    // BOM 要 10uF 6.3V：100V 的物料可满足（高耐压可替代低要求）。
+    // BOM 要 10uF 6.3V：100V 的物料可满足，但必须标记为可替代。
     const need63 = await match([{ model: "10uF 6.3V", designator: "C2", quantity: 1 }]);
-    expect(need63.body.have).toHaveLength(1);
-    expect(need63.body.have[0].material.name).toBe("BOM测试10uF-100V");
+    expect(need63.body.have).toHaveLength(0);
+    expect(need63.body.substitute).toHaveLength(1);
+    expect(need63.body.substitute[0].material.name).toBe("BOM测试10uF-100V");
+    expect(need63.body.substitute[0].substituteReasons).toContain("耐压高于需求");
+  });
+
+  it("耐压精确值优先于更高耐压，额定值缺失不能匹配", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试15uF-50V",
+        categoryId: 2,
+        attributes: {
+          [String(capIds.get("容量")!)]: "15",
+          [String(capIds.get("额定电压")!)]: "50",
+          [String(capIds.get("封装")!)]: "0603",
+        },
+        attributeUnits: { [String(capIds.get("容量")!)]: "uF" },
+        quantity: 8,
+      }),
+    );
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试15uF-25V",
+        categoryId: 2,
+        attributes: {
+          [String(capIds.get("容量")!)]: "15",
+          [String(capIds.get("额定电压")!)]: "25",
+          [String(capIds.get("封装")!)]: "0603",
+        },
+        attributeUnits: { [String(capIds.get("容量")!)]: "uF" },
+        quantity: 3,
+      }),
+    );
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试18uF-无耐压",
+        categoryId: 2,
+        attributes: {
+          [String(capIds.get("容量")!)]: "18",
+          [String(capIds.get("封装")!)]: "0603",
+        },
+        attributeUnits: { [String(capIds.get("容量")!)]: "uF" },
+        quantity: 6,
+      }),
+    );
+
+    const exact = await match([{ model: "15uF 25V", designator: "C3", package: "0603", quantity: 1 }]);
+    expect(exact.body.have).toHaveLength(1);
+    expect(exact.body.have[0].material.name).toBe("BOM测试15uF-25V");
+    expect(exact.body.substitute).toHaveLength(0);
+
+    const unknown = await match([{ model: "18uF 25V", designator: "C4", package: "0603", quantity: 1 }]);
+    expect(unknown.body.have).toHaveLength(0);
+    expect(unknown.body.substitute).toHaveLength(0);
+    expect(unknown.body.notFound).toHaveLength(1);
+  });
+
+  it("容差、功率和电流不同进入可替代，不直接判为精确", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试123k-10%-0.125W",
+        categoryId: 1,
+        attributes: {
+          [String(resIds.get("阻值")!)]: "123",
+          [String(resIds.get("精度")!)]: "10",
+          [String(resIds.get("功率")!)]: "0.125",
+          [String(resIds.get("封装")!)]: "0603",
+        },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 10,
+      }),
+    );
+    const inductorIds = await fetchAttrIds(3);
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "BOM测试27uH-1A",
+        categoryId: 3,
+        attributes: {
+          [String(inductorIds.get("电感量")!)]: "27",
+          [String(inductorIds.get("额定电流")!)]: "1",
+          [String(inductorIds.get("封装")!)]: "0603",
+        },
+        quantity: 10,
+      }),
+    );
+
+    const resistor = await match([
+      { model: "123kΩ 1% 0.25W 电阻", designator: "R20", package: "0603", quantity: 1 },
+    ]);
+    expect(resistor.body.have).toHaveLength(0);
+    expect(resistor.body.substitute).toHaveLength(1);
+    expect(resistor.body.substitute[0].substituteReasons).toEqual(
+      expect.arrayContaining(["容差/精度不同", "功率不同"]),
+    );
+
+    const inductor = await match([{ model: "27uH 2A 电感", designator: "L20", package: "0603", quantity: 1 }]);
+    expect(inductor.body.have).toHaveLength(0);
+    expect(inductor.body.substitute).toHaveLength(1);
+    expect(inductor.body.substitute[0].substituteReasons).toContain("电流不同");
   });
 
   it("名称精确匹配：零件号（二极管）", async () => {
@@ -930,6 +1032,30 @@ describe("BOM 匹配", () => {
     expect(need0603.body.have).toHaveLength(1);
     expect(need0603.body.have[0].material.name).toBe("BOM测试6.8k-0603");
     expect(need0603.body.substitute).toHaveLength(0);
+  });
+
+  it("名称完全相同也不能绕过封装规则", async () => {
+    await api<Material>(
+      "/api/materials",
+      json("POST", {
+        name: "82KR",
+        categoryId: 1,
+        attributes: { [String(resIds.get("阻值")!)]: "82", [String(resIds.get("封装")!)]: "0603" },
+        attributeUnits: { [String(resIds.get("阻值")!)]: "kΩ" },
+        quantity: 5,
+      }),
+    );
+
+    const oneStep = await match([{ model: "82KR", designator: "R30", package: "0805", quantity: 1 }]);
+    expect(oneStep.body.have).toHaveLength(0);
+    expect(oneStep.body.substitute).toHaveLength(1);
+    expect(oneStep.body.substitute[0].material.name).toBe("82KR");
+    expect(oneStep.body.substitute[0].substituteReasons).toContain("封装小一档");
+
+    const twoSteps = await match([{ model: "82KR", designator: "R31", package: "1206", quantity: 1 }]);
+    expect(twoSteps.body.have).toHaveLength(0);
+    expect(twoSteps.body.substitute).toHaveLength(0);
+    expect(twoSteps.body.notFound).toHaveLength(1);
   });
 
   it("不会把值/位号不匹配的型号误配到其它分类", async () => {
